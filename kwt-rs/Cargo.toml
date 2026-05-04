@@ -1,9 +1,9 @@
 [package]
 name = "kwt"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
-description = "KDL Web Token — reference implementation"
+description = "KDL Web Token (KWT) — production Rust implementation"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/TheMapleseed/KWT"
@@ -11,15 +11,13 @@ documentation = "https://docs.rs/kwt"
 keywords = ["kwt", "token", "aead", "jwt", "kdl"]
 categories = ["cryptography", "authentication"]
 
-[dependencies]
-# Cryptography — all from the audited RustCrypto project
-chacha20poly1305 = "0.10"
-aes-gcm          = "0.10"
-hkdf             = "0.12"
-sha2             = "0.10"
+[lints.rust]
+unsafe_code = "forbid"
 
-# Utilities
-rand             = "0.8"
+[dependencies]
+# OS CSPRNG for master keys and XChaCha nonces; AEAD + HKDF + SHA-256 are in-tree (`src/primitive/`).
+getrandom        = { version = "0.2", features = ["std"] }
+
 uuid             = { version = "1", features = ["v7"] }
 zeroize          = { version = "1", features = ["derive"] }
 base64ct         = { version = "1", features = ["alloc"] }

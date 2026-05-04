@@ -1,6 +1,6 @@
 # KWT (KDL Web Token)
 
-This repository contains the **technical white paper** ([`kwt_whitepaper.tex`](kwt_whitepaper.tex)) for **KWT** — a compact, versioned, always-encrypted authentication token format — and a **Rust reference implementation** in [`kwt-rs/`](kwt-rs/). This document summarizes the **mathematics** and **control flow** described in the white paper.
+This repository contains the **technical white paper** ([`kwt_whitepaper.tex`](kwt_whitepaper.tex)) for **KWT** — a compact, versioned, always-encrypted authentication token format — and the **production Rust crate** [`kwt`](kwt-rs/) in [`kwt-rs/`](kwt-rs/). This document summarizes the **mathematics** and **control flow** described in the white paper.
 
 ---
 
@@ -147,6 +147,6 @@ Replay control is **mandated** via a **counting Bloom filter** (e.g. Redis): che
 ## Related files
 
 - **Full specification and rationale:** [`kwt_whitepaper.tex`](kwt_whitepaper.tex) (Draft 1.0).  
-- **Rust reference crate:** [`kwt-rs/README.md`](kwt-rs/README.md).
+- **Rust crate `kwt` (0.2.0):** [`kwt-rs/README.md`](kwt-rs/README.md) — includes an **operational security** checklist (what integrators must still do: keys, TLS, replay, rate limits, `public_message`, audits).
 
-The white paper stresses that KWT is a **design target**: fuzzing, professional audit, and staged rollout are recommended before relying on it for primary authentication.
+The white paper still recommends fuzzing, independent audit, and staged rollout before relying on any token format—including `kwt`—for primary authentication.

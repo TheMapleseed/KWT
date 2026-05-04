@@ -1,6 +1,5 @@
 # Rust
 kwt-rs/target/
-kwt-rs/Cargo.lock
 **/*.rs.bk
 
 # OS / editor

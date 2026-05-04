@@ -193,7 +193,7 @@ lower transmission latency, less CPU time for cryptographic operations, and
 lower energy expenditure at scale.
 
 We derive the mathematical basis for these claims, specify the complete protocol,
-and provide a reference implementation in Rust.
+and provide a production Rust implementation (in-tree cryptographic primitives).
 
 % ============================================================
 \section{Introduction and Motivation}
@@ -453,6 +453,21 @@ available via the W3C Web Crypto API in all modern browsers. See
 Section~\ref{sec:browser} for details.
 \end{notebox}
 
+\subsection{Optional streaming and chunked AEAD (non-default)}
+
+The compact three-segment wire form (\texttt{v\{N\}.nonce.ciphertext}) is the
+\textbf{primary} KWT profile: a bearer object sized and used like \textbf{JWT}
+(single AEAD package, bounded length, typical \texttt{Authorization} contexts).
+
+Some deployments may additionally require \textbf{confidentiality over large or
+streaming bodies}. For that, a future specification may register an
+\textbf{opt-in} profile with its own framing (e.g.\ fixed-size chunks, each
+authenticated before release, explicit maximum chunk count and rekeying rules).
+Such a profile \textbf{must not} replace the default path: validators and
+gateways that only implement the compact form continue to treat KWT as a
+small, single-shot token. Until that profile is specified, implementations
+\textbf{must} use only the compact wire shape for JWT-style credentials.
+
 \subsection{Canonical Binary Payload Format}
 
 \subsubsection{Opcode Registry}
@@ -534,14 +549,17 @@ Any failure returns a generic 401 — callers must not expose which step failed.
 \begin{enumerate}[noitemsep]
   \item Parse version prefix; reject unknown versions immediately.
   \item Decode base64url segments; reject malformed base64.
-  \item \textbf{Check JTI bloom filter} before performing any cryptography
-        (prevents decryption-cost denial-of-service from replay flood).
+  \item (Optional) Replay filter on wire token or JTI hash \emph{before} decryption
+        to shed obviously replayed traffic without full AEAD cost.
   \item Derive session key via HKDF.
   \item Decrypt and authenticate (AEAD); reject if tag fails.
   \item Parse canonical binary payload; reject malformed opcodes.
-  \item Validate $\mathtt{expires\_at} > \mathtt{now}$.
+  \item Reject if $\mathtt{issued\_at}$ exceeds validator wall time plus a bounded future
+        skew (reference implementation: $\approx 60$\,s); accept slightly early client clocks.
+  \item Reject if $\mathtt{expires\_at}$, plus a small leeway (reference: $\approx 30$\,s),
+        is before $\mathtt{now}$.
+  \item Run application JTI uniqueness check (e.g.\ \texttt{SETNX}); reject replayed \texttt{jti}.
   \item Validate \texttt{audience} matches server's registered audience.
-  \item Add JTI to bloom filter; return validated claims.
 \end{enumerate}
 
 % ============================================================
@@ -649,7 +667,7 @@ Security model      & Versioned, fixed algos     & Versioned, fixed algos \\
 Payload format      & JSON                       & Binary canonical \\
 Typical payload     & 150--250 bytes             & 40--80 bytes \\
 Info density        & $\sim$1.75 bits/byte       & $\sim$2.94 bits/byte \\
-Library support     & 10+ languages              & Rust reference only \\
+Library support     & 10+ languages              & Rust \texttt{kwt} crate (WASM-capable) \\
 Audit status        & Multiple audits            & No audits \\
 \bottomrule
 \end{tabularx}
@@ -700,7 +718,7 @@ WebAssembly module or a JavaScript fallback library.
 
   \item \textbf{If v1 is required} (e.g., for interoperability with a Rust
         backend that issued v1 tokens), ship a \texttt{libsodium-wasm} bundle
-        ($\sim$163\,kB gzipped) or compile the reference Rust implementation
+        ($\sim$163\,kB gzipped) or compile the Rust \texttt{kwt} crate
         to WASM via \texttt{wasm-pack}.
 
   \item \textbf{Never place the master key in browser storage.}
@@ -769,25 +787,25 @@ async function kwtValidate(tokenStr, rawKey, expectedAudience) {
 \section{Implementation Guidance}
 % ============================================================
 
-\subsection{Recommended Rust Dependencies}
+\subsection{Rust implementation components}
 
 \begin{table}[H]
 \centering
-\caption{Rust crates for KWT reference implementation}
+\caption{Cryptography and dependencies in the production \texttt{kwt} crate}
 \small
-\begin{tabularx}{\linewidth}{L{3.2cm} L{3.8cm} X}
+\begin{tabularx}{\linewidth}{L{3.6cm} L{3.4cm} X}
 \toprule
 \rowcolor{kwttablehead}
-\color{white}\textbf{Crate} &
+\color{white}\textbf{Component} &
 \color{white}\textbf{Purpose} &
 \color{white}\textbf{Notes} \\
 \midrule
-\texttt{chacha20poly1305} & XChaCha20-Poly1305 (v1/v3) & RustCrypto; constant-time \\
-\texttt{aes-gcm}          & AES-256-GCM (v2)           & Uses AES-NI where available \\
-\texttt{hkdf} + \texttt{sha2} & HKDF-SHA256            & RFC 5869 compliant \\
-\texttt{uuid}             & UUID v7 for JTI            & Time-ordered for bloom filter \\
-\texttt{rand}             & CSPRNG nonce generation    & OS entropy source \\
-\texttt{zeroize}          & Key material erasure       & Prevents key in swap/core dump \\
+\texttt{primitive::xchacha20poly1305} & XChaCha20-Poly1305 (v1) & In-tree; RFC 8439 + draft XChaCha \\
+\texttt{primitive::hkdf} + \texttt{primitive::sha256} & HKDF-SHA256 & In-tree; RFC 5869 \\
+\texttt{getrandom}        & OS CSPRNG                 & Nonces and master-key generation \\
+\texttt{uuid}             & UUID v7 for JTI           & Time-ordered for replay indexing \\
+\texttt{zeroize}          & Key material erasure      & Clears sensitive buffers on drop \\
+\texttt{base64ct}         & base64url wire encoding   & Constant-time decode \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -838,10 +856,11 @@ versioned, algorithm-fixed design eliminates the entire class of
 flexibility-based JWT attacks that have dominated web security incident
 reports for a decade.
 
-The primary limitation of KWT at this stage is the absence of battle-tested
-implementations and independent security audits. The recommendation is to treat
-this specification as a design target: implement the reference Rust library,
-subject it to fuzz testing and professional audit, and deploy behind a feature
+The primary limitation of KWT at this stage is the absence of broad
+multi-language implementations and independent security audits of every
+deployment. The recommendation is to treat this specification as a design target:
+harden and fuzz the Rust \texttt{kwt} crate (or your port), obtain professional
+audit coverage appropriate to your threat model, and deploy behind a feature
 flag in a high-throughput non-critical path before promoting to primary
 authentication infrastructure.
 

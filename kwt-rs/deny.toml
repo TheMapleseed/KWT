@@ -1,0 +1,11 @@
+# cargo-deny: https://embarkstudios.github.io/cargo-deny/
+# Install: `cargo install cargo-deny`
+# Run: `cd kwt-rs && cargo deny check`
+
+[advisories]
+version = 2
+db-urls = ["https://github.com/RustSec/advisory-db"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"

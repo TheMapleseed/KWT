@@ -1,8 +1,11 @@
+#![forbid(unsafe_code)]
+
 // ============================================================================
 // kwt/src/main.rs
 //
-// Example binary demonstrating KWT issue and validate, with a side-by-side
-// size comparison against an equivalent JWT payload.
+// Example binary demonstrating KWT issue and validate, with a **wire-size**
+// comparison to a typical RS256-shaped JWT (density / bytes only — not a claim
+// that KWT accepts or mirrors JWT security rules).
 // ============================================================================
 
 use kwt::{
@@ -13,20 +16,20 @@ use kwt::{
 
 fn main() {
     println!("╔══════════════════════════════════════════════════════════════╗");
-    println!("║             KWT — KDL Web Token  Reference Demo             ║");
+    println!("║                 KWT — KDL Web Token  Example                 ║");
     println!("╚══════════════════════════════════════════════════════════════╝\n");
 
     // -----------------------------------------------------------------------
     // 1.  Generate a master key
     //     In production: load from a secrets manager (Vault, AWS SSM, etc.)
     // -----------------------------------------------------------------------
-    let master_key = MasterKey::generate();
+    let master_key = MasterKey::generate().expect("CSPRNG");
     println!("[1] Generated 256-bit master key (CSPRNG)");
 
     // -----------------------------------------------------------------------
     // 2.  Build claims
     // -----------------------------------------------------------------------
-    let mut claims = new_claims("user_882", "api.example.com", 3_600);
+    let mut claims = new_claims("user_882", "api.example.com", 3_600).expect("claims");
     claims.roles  = vec![Role::Admin, Role::Editor];
     claims.scopes = vec![Scope::ReadStats, Scope::WriteLogs];
 
@@ -61,15 +64,12 @@ fn main() {
     println!("    {}", token_str);
 
     // -----------------------------------------------------------------------
-    // 5.  Compare with equivalent JWT
+    // 5.  Compare with equivalent JWT (static RS256-shaped example; sizes are illustrative)
     // -----------------------------------------------------------------------
-    let equivalent_jwt = format!(
-        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.\
+    let equivalent_jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.\
          eyJzdWIiOiJ1c2VyXzg4MiIsImlhdCI6e30sImV4cCI6e30sImF1ZCI6ImFwaS5leGFtcGxlLmNvbSIsInJvbGVzIjpbImFkbWluIiwiZWRpdG9yIl0sInNjb3BlcyI6WyJyZWFkOnN0YXRzIiwid3JpdGU6bG9ncyJdfQ.\
-         SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c_dbnU9JZFqcT8R0hM9GbwNu3PVMBAlhU8GWfG8dFQ",
-        // (timestamps omitted for display purposes — real JWT would be longer)
-    );
-    println!("\n[5] Size comparison:");
+         SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c_dbnU9JZFqcT8R0hM9GbwNu3PVMBAlhU8GWfG8dFQ";
+    println!("\n[5] Size comparison (sample JWT body {} bytes):", equivalent_jwt.len());
     println!("    ┌──────────────────────────┬──────────────┐");
     println!("    │ Format                   │ Size (bytes) │");
     println!("    ├──────────────────────────┼──────────────┤");
@@ -124,7 +124,7 @@ fn main() {
     // 8.  Demonstrate wrong-key detection
     // -----------------------------------------------------------------------
     println!("\n[8] Wrong-key detection demo...");
-    let wrong_key = MasterKey::generate();
+    let wrong_key = MasterKey::generate().expect("CSPRNG");
     match KwtToken::validate(&token_str, &wrong_key, "api.example.com") {
         Ok(_)  => println!("    ✗ ERROR: token accepted with wrong key (this should not happen)"),
         Err(e) => println!("    ✓ Wrong key correctly rejected: {}", e),

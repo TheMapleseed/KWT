@@ -3,6 +3,9 @@
 //
 // Cryptographic operations for KWT v1 (XChaCha20-Poly1305 + HKDF-SHA256).
 //
+// Primitives are implemented locally under `crate::primitive` (no crates.io
+// AEAD / SHA / HKDF stack).
+//
 // Key hierarchy:
 //   master_key (256-bit, long-lived, kept in secrets manager)
 //       |
@@ -24,14 +27,12 @@
 // On decryption, the tag is verified before any plaintext is returned.
 // ============================================================================
 
-use chacha20poly1305::{
-    XChaCha20Poly1305,
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-};
-use hkdf::Hkdf;
-use sha2::Sha256;
+use getrandom::getrandom;
 use zeroize::Zeroizing;
+
 use crate::error::KwtError;
+use crate::primitive::hkdf::hkdf_sha256;
+use crate::primitive::xchacha20poly1305;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -72,11 +73,10 @@ impl MasterKey {
     }
 
     /// Generate a fresh random master key (for key rotation or testing).
-    pub fn generate() -> Self {
-        use rand::RngCore;
+    pub fn generate() -> Result<Self, KwtError> {
         let mut key = Zeroizing::new([0u8; KEY_SIZE]);
-        OsRng.fill_bytes(key.as_mut());
-        MasterKey(key)
+        getrandom(key.as_mut()).map_err(|_| KwtError::EntropyUnavailable)?;
+        Ok(MasterKey(key))
     }
 }
 
@@ -97,10 +97,10 @@ fn derive_session_key(
     let mut salt = [0u8; KEY_SIZE];
     salt[..NONCE_SIZE].copy_from_slice(nonce);
 
-    let hk = Hkdf::<Sha256>::new(Some(&salt), master_key.0.as_ref());
     let mut session_key = Zeroizing::new([0u8; KEY_SIZE]);
-    hk.expand(HKDF_INFO_V1, session_key.as_mut())
-        .map_err(|_| KwtError::KeyDerivationFailed)?;
+    if !hkdf_sha256(&salt, master_key.0.as_ref(), HKDF_INFO_V1, session_key.as_mut()) {
+        return Err(KwtError::KeyDerivationFailed);
+    }
 
     Ok(session_key)
 }
@@ -113,7 +113,7 @@ fn derive_session_key(
 ///
 /// Returns `(nonce, ciphertext_with_tag)`.
 /// The ciphertext includes the 16-byte Poly1305 authentication tag appended
-/// by the AEAD library — do not strip it before storage/transmission.
+/// by the AEAD — do not strip it before storage/transmission.
 ///
 /// # Security
 /// Nonce is generated from the OS CSPRNG on every call.
@@ -122,22 +122,14 @@ pub fn encrypt(
     plaintext: &[u8],
     master_key: &MasterKey,
 ) -> Result<([u8; NONCE_SIZE], Vec<u8>), KwtError> {
-    // Generate a fresh random nonce
-    let nonce_generic = XChaCha20Poly1305::generate_nonce(&mut OsRng);
     let mut nonce = [0u8; NONCE_SIZE];
-    nonce.copy_from_slice(&nonce_generic);
+    getrandom(&mut nonce).map_err(|_| KwtError::EntropyUnavailable)?;
 
-    // Derive per-token session key
     let session_key = derive_session_key(master_key, &nonce)?;
+    let sk: &[u8; KEY_SIZE] = &session_key;
 
-    // Construct cipher with derived key
-    let cipher = XChaCha20Poly1305::new_from_slice(session_key.as_ref())
-        .map_err(|_| KwtError::KeyDerivationFailed)?;
-
-    // Encrypt — output is ciphertext || 16-byte Poly1305 tag
-    let ciphertext = cipher
-        .encrypt(&nonce_generic, plaintext)
-        .map_err(|_| KwtError::AuthenticationFailed)?;
+    let ciphertext = xchacha20poly1305::seal(sk, &nonce, &[], plaintext)
+        .ok_or(KwtError::AuthenticationFailed)?;
 
     Ok((nonce, ciphertext))
 }
@@ -152,38 +144,24 @@ pub fn encrypt(
 /// Returns the plaintext only if the authentication tag is valid.
 /// Any modification to the ciphertext, nonce, or tag will cause this to fail.
 ///
-/// # Timing
-/// Authentication tag comparison is constant-time (XChaCha20-Poly1305
-/// in the RustCrypto implementation uses subtle::ConstantTimeEq).
+/// The buffer is wrapped in [`Zeroizing`] so it is cleared on drop (defense in depth;
+/// callers should still avoid logging decrypted bytes).
 pub fn decrypt(
     ciphertext: &[u8],
     nonce: &[u8; NONCE_SIZE],
     master_key: &MasterKey,
-) -> Result<Vec<u8>, KwtError> {
-    use chacha20poly1305::aead::generic_array::GenericArray;
-
-    // Minimum size: 16-byte tag means ciphertext must be at least 17 bytes
-    if ciphertext.len() < 17 {
+) -> Result<Zeroizing<Vec<u8>>, KwtError> {
+    if ciphertext.len() < 16 {
         return Err(KwtError::MalformedToken(
-            "ciphertext too short to contain authentication tag".into()
+            "ciphertext too short to contain authentication tag".into(),
         ));
     }
 
-    // Derive the same session key using the provided nonce
     let session_key = derive_session_key(master_key, nonce)?;
+    let sk: &[u8; KEY_SIZE] = &session_key;
 
-    // Reconstruct the cipher
-    let cipher = XChaCha20Poly1305::new_from_slice(session_key.as_ref())
-        .map_err(|_| KwtError::KeyDerivationFailed)?;
-
-    let nonce_ga = GenericArray::from_slice(nonce);
-
-    // Decrypt and verify — returns Err if tag check fails
-    let plaintext = cipher
-        .decrypt(nonce_ga, ciphertext)
-        .map_err(|_| KwtError::AuthenticationFailed)?;
-
-    Ok(plaintext)
+    let pt = xchacha20poly1305::open(sk, nonce, &[], ciphertext).ok_or(KwtError::AuthenticationFailed)?;
+    Ok(Zeroizing::new(pt))
 }
 
 // ---------------------------------------------------------------------------
@@ -196,36 +174,34 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_round_trip() {
-        let key = MasterKey::generate();
+        let key = MasterKey::generate().unwrap();
         let plaintext = b"hello from kwt crypto layer";
 
         let (nonce, ciphertext) = encrypt(plaintext, &key).expect("encrypt failed");
         let recovered = decrypt(&ciphertext, &nonce, &key).expect("decrypt failed");
 
-        assert_eq!(plaintext.as_ref(), recovered.as_slice());
+        assert_eq!(plaintext.as_slice(), recovered.as_slice());
     }
 
     #[test]
     fn wrong_key_fails_auth() {
-        let key1 = MasterKey::generate();
-        let key2 = MasterKey::generate();
+        let key1 = MasterKey::generate().unwrap();
+        let key2 = MasterKey::generate().unwrap();
         let plaintext = b"sensitive token payload";
 
         let (nonce, ciphertext) = encrypt(plaintext, &key1).expect("encrypt failed");
 
-        // Decrypting with a different key must fail (auth tag mismatch)
         let result = decrypt(&ciphertext, &nonce, &key2);
         assert!(result.is_err(), "decryption with wrong key should fail");
     }
 
     #[test]
     fn tampered_ciphertext_fails_auth() {
-        let key = MasterKey::generate();
+        let key = MasterKey::generate().unwrap();
         let plaintext = b"sensitive token payload";
 
         let (nonce, mut ciphertext) = encrypt(plaintext, &key).expect("encrypt failed");
 
-        // Flip a bit in the middle of the ciphertext
         let mid = ciphertext.len() / 2;
         ciphertext[mid] ^= 0xFF;
 
@@ -235,44 +211,48 @@ mod tests {
 
     #[test]
     fn tampered_nonce_fails_auth() {
-        let key = MasterKey::generate();
+        let key = MasterKey::generate().unwrap();
         let plaintext = b"sensitive token payload";
 
         let (mut nonce, ciphertext) = encrypt(plaintext, &key).expect("encrypt failed");
-        nonce[0] ^= 0x01; // flip one bit in nonce
+        nonce[0] ^= 0x01;
 
-        // Wrong nonce → wrong session key → wrong decryption → tag mismatch
         let result = decrypt(&ciphertext, &nonce, &key);
         assert!(result.is_err(), "wrong nonce should cause auth failure");
     }
 
     #[test]
     fn each_encryption_uses_different_nonce() {
-        let key = MasterKey::generate();
+        let key = MasterKey::generate().unwrap();
         let plaintext = b"same plaintext every time";
 
         let (nonce1, ct1) = encrypt(plaintext, &key).unwrap();
         let (nonce2, ct2) = encrypt(plaintext, &key).unwrap();
 
-        // Nonces must be different (CSPRNG)
         assert_ne!(nonce1, nonce2, "nonces should be random and unique");
-        // Ciphertexts should also differ (different nonce → different keystream)
         assert_ne!(ct1, ct2, "ciphertexts should differ even for same plaintext");
     }
 
     #[test]
     fn key_derivation_is_deterministic() {
-        let key = MasterKey::generate();
+        let key = MasterKey::generate().unwrap();
         let nonce = [0x42u8; NONCE_SIZE];
 
-        // Same inputs must produce same session key
         let k1 = derive_session_key(&key, &nonce).unwrap();
         let k2 = derive_session_key(&key, &nonce).unwrap();
         assert_eq!(k1.as_ref(), k2.as_ref());
 
-        // Different nonce must produce different session key
         let nonce2 = [0x43u8; NONCE_SIZE];
         let k3 = derive_session_key(&key, &nonce2).unwrap();
         assert_ne!(k1.as_ref(), k3.as_ref());
+    }
+
+    #[test]
+    fn empty_plaintext_round_trip() {
+        let key = MasterKey::generate().unwrap();
+        let (nonce, ciphertext) = encrypt(b"", &key).expect("encrypt empty");
+        assert_eq!(ciphertext.len(), 16, "AEAD output is tag only for empty plaintext");
+        let recovered = decrypt(&ciphertext, &nonce, &key).expect("decrypt empty");
+        assert!(recovered.is_empty());
     }
 }
