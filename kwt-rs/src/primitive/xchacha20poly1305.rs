@@ -2,7 +2,9 @@
 //! Local implementation — no `chacha20poly1305` crate.
 
 // Poly1305 soft state machine derives from RustCrypto / poly1305-donna lineage
-// (Apache-2.0 / MIT). ChaCha quarter rounds follow RFC 8439 / Bernstein.
+// (see those projects for their original license terms). ChaCha quarter rounds
+// follow RFC 8439 / Bernstein. The **kwt** crate is licensed under GPL-3.0-or-later
+// — see the `LICENSE` file in this crate.
 
 const CHACHA_CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 const STATE_WORDS: usize = 16;

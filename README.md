@@ -147,6 +147,6 @@ Replay control is **mandated** via a **counting Bloom filter** (e.g. Redis): che
 ## Related files
 
 - **Full specification and rationale:** [`kwt_whitepaper.tex`](kwt_whitepaper.tex) (Draft 1.0).  
-- **Rust crate `kwt` (0.2.0):** [`kwt-rs/README.md`](kwt-rs/README.md) — includes an **operational security** checklist (what integrators must still do: keys, TLS, replay, rate limits, `public_message`, audits).
+- **Rust crate `kwt` (0.2.1, GPL-3.0-or-later):** [`kwt-rs/README.md`](kwt-rs/README.md) — includes an **operational security** checklist (what integrators must still do: keys, TLS, replay, rate limits, `public_message`, audits).
 
 The white paper still recommends fuzzing, independent audit, and staged rollout before relying on any token format—including `kwt`—for primary authentication.

@@ -1,13 +1,16 @@
 [package]
 name = "kwt"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.85"
 description = "KDL Web Token (KWT) — production Rust implementation"
 readme = "README.md"
-license = "MIT OR Apache-2.0"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/TheMapleseed/KWT"
+homepage = "https://github.com/TheMapleseed/KWT"
 documentation = "https://docs.rs/kwt"
+# Published crate tarball: sources + license only (no `deny.toml` / CI-only files).
+include = ["LICENSE", "README.md", "Cargo.toml", "src/**/*.rs"]
 keywords = ["kwt", "token", "aead", "jwt", "kdl"]
 categories = ["cryptography", "authentication"]
 

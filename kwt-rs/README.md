@@ -1,23 +1,36 @@
 # KWT — Rust implementation
 
-**Crate version: 0.2.0** — see [What you must still do](#what-you-must-still-do-operational-security) for breaking/API guidance when upgrading from 0.1.x.
+**Crate version: 0.2.1** — see [What you must still do](#what-you-must-still-do-operational-security) for breaking/API guidance when upgrading from 0.1.x.
 
 ## Prerequisites
 - Rust 1.85+ (stable; edition 2024)
 - `cargo`
 
 ## Build & Run
+
+From the **repository root** (virtual workspace; recommended):
+
+```bash
+cargo build -p kwt
+cargo run -p kwt    # example binary in src/main.rs
+cargo test -p kwt
+cargo publish -p kwt --dry-run
+```
+
+From **`kwt-rs/`** only (Cargo still finds the parent workspace):
+
 ```bash
 cd kwt-rs
 cargo build
-cargo run       # runs the example binary in src/main.rs
-cargo test      # runs all unit tests across all modules
+cargo run
+cargo test
 ```
 
 ## File Structure
 ```
 kwt-rs/
 ├── Cargo.toml          # getrandom, uuid, zeroize, base64ct, thiserror (+ dev hex-literal for tests)
+├── LICENSE             # GPL-3.0-or-later (full text)
 └── src/
     ├── lib.rs           # Crate root and re-exports
     ├── error.rs         # KwtError enum (+ public_message for client-safe errors)
@@ -50,6 +63,10 @@ This crate implements **v1 KWT**: bounded symmetric tokens suitable as a **JWT r
 - Never log or serialize the `MasterKey`.
 - Prefer **`MasterKey::from_bytes`** from your secret store over ad-hoc env parsing in untrusted shells.
 - **`crypto::decrypt`** returns **`Zeroizing<Vec<u8>>`** — treat plaintext as sensitive until you have finished parsing; do not log it.
+
+## License
+
+This crate is **GNU General Public License v3.0 or later** (**`GPL-3.0-or-later`**). See [`LICENSE`](LICENSE) for the full text. If you need a different license for linking or distribution, that is a separate legal decision; the published crate is GPLv3+.
 
 ## Upgrading from 0.1.x
 

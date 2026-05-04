@@ -1,0 +1,5 @@
+# Virtual workspace: the publishable crate lives in `kwt-rs/`.
+# From the repository root: `cargo test`, `cargo publish -p kwt --dry-run`
+[workspace]
+resolver = "3"
+members = ["kwt-rs"]
