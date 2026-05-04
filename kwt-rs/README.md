@@ -1,7 +1,7 @@
 # KWT Reference Implementation (Rust)
 
 ## Prerequisites
-- Rust 1.75+ (stable)
+- Rust 1.85+ (stable; edition 2024)
 - `cargo`
 
 ## Build & Run

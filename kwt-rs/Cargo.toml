@@ -1,12 +1,19 @@
 [package]
 name = "kwt"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 description = "KDL Web Token — reference implementation"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/TheMapleseed/KWT"
+documentation = "https://docs.rs/kwt"
+keywords = ["kwt", "token", "aead", "jwt", "kdl"]
+categories = ["cryptography", "authentication"]
 
 [dependencies]
 # Cryptography — all from the audited RustCrypto project
-chacha20poly1305 = { version = "0.10", features = ["xchacha20poly1305"] }
+chacha20poly1305 = "0.10"
 aes-gcm          = "0.10"
 hkdf             = "0.12"
 sha2             = "0.10"
