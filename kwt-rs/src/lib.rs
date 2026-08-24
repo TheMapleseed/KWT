@@ -26,9 +26,7 @@
 //!
 //! ## Performance at token scale (bounded caps)
 //!
-//! KWT targets **small opaque tokens**, not bulk payloads. Public caps
-//! ([`MAX_TOKEN_WIRE_BYTES`], [`MAX_CIPHERTEXT_BYTES`], [`MAX_PAYLOAD_BYTES`]) bound
-//! worst-case work and allocation per `issue` / `validate`. Typical tokens are on the
+//! KWT targets **small opaque tokens**, not bulk payloads. Typical tokens are on the
 //! order of **hundreds of bytes** on the wire; a few short-lived `Vec` allocations per
 //! request are normal and dwarfed by AEAD + base64 at that size. For extreme QPS,
 //! pooling or custom buffers live at the **application** layer — the protocol stays
@@ -72,11 +70,6 @@ pub mod crypto;
 pub mod error;
 pub mod token;
 
-pub use codec::{
-    encode as codec_encode, Claims, Role, Scope, MAX_AUDIENCE_BYTES, MAX_PAYLOAD_BYTES,
-    MAX_SUBJECT_BYTES,
-};
+pub use codec::{encode as codec_encode, Claims, Role, Scope};
 pub use error::KwtError;
-pub use token::{
-    KwtToken, Version, MAX_CIPHERTEXT_BYTES, MAX_TOKEN_WIRE_BYTES,
-};
+pub use token::{KwtToken, Version};

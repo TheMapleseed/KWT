@@ -45,23 +45,6 @@ const OP_SCOPES:     u8 = 0x50;
 const OP_JTI:        u8 = 0x60;
 const OP_END:        u8 = 0x80;
 
-/// Maximum UTF-8 length for `subject` on the wire and in [`Claims`].
-///
-/// Includes ~25% slack over a minimal 128-byte cap for long opaque ids and
-/// conservative defaults on constrained systems.
-pub const MAX_SUBJECT_BYTES: usize = 160;
-
-/// Maximum UTF-8 length for `audience` (host or URI-shaped `aud` strings).
-///
-/// Same headroom rationale as [`MAX_SUBJECT_BYTES`].
-pub const MAX_AUDIENCE_BYTES: usize = 320;
-
-/// Maximum decoded canonical payload size accepted by [`decode`] (memory / CPU bound).
-///
-/// Sized above typical claim sets with extra margin for pathological varints,
-/// parser scratch, and hosts with large allocation granularity.
-pub const MAX_PAYLOAD_BYTES: usize = 80 * 1024;
-
 // ---------------------------------------------------------------------------
 // Domain types
 // ---------------------------------------------------------------------------
@@ -149,7 +132,7 @@ impl std::fmt::Display for Scope {
 /// `println!("{claims:?}")` in servers does not leak identifiers into logs.
 #[derive(Clone)]
 pub struct Claims {
-    /// Subject identifier. Alphanumeric, max [`MAX_SUBJECT_BYTES`] UTF-8 bytes.
+    /// Subject identifier. Alphanumeric.
     pub subject: String,
 
     /// Unix timestamp (seconds) when the token was issued.
@@ -158,8 +141,7 @@ pub struct Claims {
     /// Unix timestamp (seconds) after which the token must be rejected.
     pub expires_at: u32,
 
-    /// Intended audience. Must exactly match the server's registered audience (max
-    /// [`MAX_AUDIENCE_BYTES`] UTF-8 bytes).
+    /// Intended audience. Must exactly match the server's registered audience.
     pub audience: String,
 
     /// Authorization roles granted to this token.
@@ -189,11 +171,8 @@ impl fmt::Debug for Claims {
 impl Claims {
     /// Validate structural integrity (not expiry — that's the token layer's job).
     pub fn validate_structure(&self) -> Result<(), KwtError> {
-        if self.subject.is_empty() || self.subject.len() > MAX_SUBJECT_BYTES {
-            return Err(KwtError::InvalidClaim(format!(
-                "subject must be 1-{} bytes",
-                MAX_SUBJECT_BYTES
-            )));
+        if self.subject.is_empty() {
+            return Err(KwtError::InvalidClaim("subject must not be empty".into()));
         }
         if !self.subject.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
             return Err(KwtError::InvalidClaim(
@@ -203,11 +182,8 @@ impl Claims {
         if self.expires_at <= self.issued_at {
             return Err(KwtError::InvalidClaim("expires_at must be after issued_at".into()));
         }
-        if self.audience.is_empty() || self.audience.len() > MAX_AUDIENCE_BYTES {
-            return Err(KwtError::InvalidClaim(format!(
-                "audience must be 1-{} bytes",
-                MAX_AUDIENCE_BYTES
-            )));
+        if self.audience.is_empty() {
+            return Err(KwtError::InvalidClaim("audience must not be empty".into()));
         }
         Ok(())
     }
@@ -329,14 +305,6 @@ pub fn encode(claims: &Claims) -> Result<Vec<u8>, KwtError> {
 ///   - END marker must be present and must be the last byte
 ///   - Required fields (subject, issued_at, expires_at, audience, jti) must be present
 pub fn decode(data: &[u8]) -> Result<Claims, KwtError> {
-    if data.len() > MAX_PAYLOAD_BYTES {
-        return Err(KwtError::PayloadError(format!(
-            "payload length {} exceeds maximum {}",
-            data.len(),
-            MAX_PAYLOAD_BYTES
-        )));
-    }
-
     let mut pos = 0;
     let mut last_opcode: u8 = 0x00;
 
@@ -367,12 +335,6 @@ pub fn decode(data: &[u8]) -> Result<Claims, KwtError> {
             OP_SUBJECT => {
                 let (len, consumed) = decode_varint(&data[pos..])?;
                 pos += consumed;
-                if len > MAX_SUBJECT_BYTES {
-                    return Err(KwtError::PayloadError(format!(
-                        "subject length {} exceeds cap {}",
-                        len, MAX_SUBJECT_BYTES
-                    )));
-                }
                 require_bytes(data, pos, len, "subject")?;
                 let s = std::str::from_utf8(&data[pos..pos + len])
                     .map_err(|_| KwtError::PayloadError("subject is not valid UTF-8".into()))?;
@@ -395,12 +357,6 @@ pub fn decode(data: &[u8]) -> Result<Claims, KwtError> {
             OP_AUDIENCE => {
                 let (len, consumed) = decode_varint(&data[pos..])?;
                 pos += consumed;
-                if len > MAX_AUDIENCE_BYTES {
-                    return Err(KwtError::PayloadError(format!(
-                        "audience length {} exceeds cap {}",
-                        len, MAX_AUDIENCE_BYTES
-                    )));
-                }
                 require_bytes(data, pos, len, "audience")?;
                 let s = std::str::from_utf8(&data[pos..pos + len])
                     .map_err(|_| KwtError::PayloadError("audience is not valid UTF-8".into()))?;
@@ -606,16 +562,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decode_rejects_payload_over_cap() {
-        let oversized = vec![0u8; MAX_PAYLOAD_BYTES + 1];
-        assert!(decode(&oversized).is_err());
-    }
-
-    #[test]
-    fn encode_rejects_audience_over_cap() {
-        let mut c = sample_claims();
-        c.audience = "x".repeat(MAX_AUDIENCE_BYTES + 1);
-        assert!(encode(&c).is_err());
-    }
 }

@@ -35,21 +35,6 @@ use crate::{
     error::KwtError,
 };
 
-/// Maximum UTF-8 length of the full `v1.{nonce}.{ciphertext}` token (rejects huge strings before base64 decode).
-///
-/// Must cover `v1.` + base64url(24-byte nonce) + base64url(ciphertext) at
-/// [`MAX_CIPHERTEXT_BYTES`], with additional slack so [`KwtToken::issue`] and
-/// [`KwtToken::validate`] share the same ceiling on all hosts. (Roughly: base64
-/// expands ciphertext by ~4/3; this cap leaves room beyond
-/// [`crate::codec::MAX_PAYLOAD_BYTES`] + tag.)
-pub const MAX_TOKEN_WIRE_BYTES: usize = 128 * 1024;
-
-/// Maximum decoded ciphertext (including Poly1305 tag) accepted in [`KwtToken::validate`].
-///
-/// Includes margin above the largest plaintext allowed by [`crate::codec::MAX_PAYLOAD_BYTES`]
-/// plus the AEAD tag (16 bytes) and rounding headroom.
-pub const MAX_CIPHERTEXT_BYTES: usize = 640 * 1024;
-
 fn now_unix_secs() -> Result<u64, KwtError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -141,15 +126,8 @@ impl KwtToken {
         let nonce_b64 = Base64UrlUnpadded::encode_string(&nonce);
         let ct_b64    = Base64UrlUnpadded::encode_string(&ciphertext);
 
-        // Step 4: assemble (same wire cap as validate — avoids issuing unusable tokens)
+        // Step 4: assemble
         let token = format!("{}.{}.{}", Version::V1.prefix(), nonce_b64, ct_b64);
-        if token.len() > MAX_TOKEN_WIRE_BYTES {
-            return Err(KwtError::MalformedToken(format!(
-                "issued token exceeds maximum wire size {} (got {})",
-                MAX_TOKEN_WIRE_BYTES,
-                token.len()
-            )));
-        }
         Ok(token)
     }
 
@@ -210,14 +188,6 @@ impl KwtToken {
     where
         F: FnOnce(&Uuid) -> Result<(), KwtError>,
     {
-        if token_str.len() > MAX_TOKEN_WIRE_BYTES {
-            return Err(KwtError::MalformedToken(format!(
-                "token exceeds maximum wire size {} (got {})",
-                MAX_TOKEN_WIRE_BYTES,
-                token_str.len()
-            )));
-        }
-
         // Step 1: split and parse version
         let parts: Vec<&str> = token_str.splitn(3, '.').collect();
         if parts.len() != 3 {
@@ -232,13 +202,6 @@ impl KwtToken {
             .map_err(|e| KwtError::Base64Error(e.to_string()))?;
         let ciphertext = Base64UrlUnpadded::decode_vec(parts[2])
             .map_err(|e| KwtError::Base64Error(e.to_string()))?;
-
-        if ciphertext.len() > MAX_CIPHERTEXT_BYTES {
-            return Err(KwtError::MalformedToken(format!(
-                "ciphertext exceeds maximum decoded size {}",
-                MAX_CIPHERTEXT_BYTES
-            )));
-        }
 
         if nonce_bytes.len() != NONCE_SIZE {
             return Err(KwtError::MalformedToken(format!(
@@ -441,9 +404,22 @@ mod tests {
     }
 
     #[test]
-    fn oversized_wire_token_rejected() {
+    fn varying_subject_and_audience_round_trip() {
         let key = make_key();
-        let huge = "v1.".to_string() + &"a".repeat(super::MAX_TOKEN_WIRE_BYTES);
-        assert!(KwtToken::validate(&huge, &key, "api.example.com").is_err());
+        for size in [1, 10, 100, 1000, 10000] {
+            let subject = "s".repeat(size);
+            let audience = "a".repeat(size);
+            let mut claims = new_claims(&subject, &audience, 3600).unwrap();
+            claims.roles = vec![Role::Admin];
+            claims.scopes = vec![Scope::ReadStats];
+
+            let token_str = KwtToken::issue(&claims, &key).unwrap();
+            let validated = KwtToken::validate(&token_str, &key, &audience).unwrap();
+
+            assert_eq!(validated.claims.subject, subject);
+            assert_eq!(validated.claims.audience, audience);
+            assert!(token_str.len() > subject.len() + audience.len());
+        }
     }
+
 }
